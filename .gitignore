@@ -1,0 +1,7 @@
+node_modules/
+npm-debug.log*
+.DS_Store
+*.tgz
+
+# Default static-export output filename from this tool itself
+/wireit-graph.html

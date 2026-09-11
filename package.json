@@ -1,0 +1,34 @@
+{
+  "name": "wireit-graph",
+  "version": "1.0.0",
+  "description": "Visualize wireit task dependency graphs as an interactive, layered DAG (D3.js). Reads a package.json's \"wireit\" config and renders/serves a live-reloading dependency graph in the browser.",
+  "main": "index.js",
+  "bin": {
+    "wireit-graph": "./index.js"
+  },
+  "type": "commonjs",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "files": [
+    "index.js",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "wireit",
+    "graph",
+    "dag",
+    "dependency-graph",
+    "d3",
+    "visualization",
+    "build-tool",
+    "cli",
+    "devtools"
+  ],
+  "author": "Søren Skovsbøll",
+  "license": "MIT",
+  "engines": {
+    "node": ">=16"
+  }
+}
