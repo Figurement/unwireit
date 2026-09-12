@@ -5,12 +5,14 @@
 const fs = require('fs');
 const path = require('path');
 const http = require('http');
+const readline = require('readline');
 const { execSync, spawn } = require('child_process');
 
 function usage() {
   console.log(`Usage:
   unwireit [path-to-package.json] [-o output.html] [--no-open]
   unwireit serve [path-to-package.json] [-p port] [--no-open] [--editor <cmd>]
+  unwireit tui [path-to-package.json] [--editor <cmd>]
 
 Reads a package.json, extracts the "wireit" task configuration, and
 renders the task dependency graph as an interactive layered DAG
@@ -24,10 +26,16 @@ mode, double-clicking a node opens package.json in your editor at the
 exact line where that task is defined under "wireit" (not the
 "scripts" entry).
 
+"tui" mode renders an interactive, searchable dependency explorer
+directly in your terminal (no browser needed) — handy for huge graphs
+where a 2D drawing gets cluttered. Search/browse the task list, drill
+into a task's dependencies and dependents, and press Ctrl+O to open
+its definition in your editor.
+
 Options:
   -o, --output <file>   Output HTML file for the default mode (default: wireit-graph.html)
   -p, --port <number>   Port to listen on in serve mode (default: 5183, bound to localhost only)
-  --editor <cmd>        Editor command template used for double-click-to-open in serve mode.
+  --editor <cmd>        Editor command template used for double-click-to-open (serve) or "o" (tui).
                          Use {file} and {line} placeholders, e.g. "code --goto {file}:{line}".
                          Defaults to $VISUAL / $EDITOR, then auto-detects a known editor on PATH.
   --no-open             Do not automatically open the browser/file
@@ -60,6 +68,8 @@ function parseArgs(argv) {
       args.open = false;
     } else if (a === 'serve' && rest.length === 0) {
       args.mode = 'serve';
+    } else if (a === 'tui' && rest.length === 0) {
+      args.mode = 'tui';
     } else {
       rest.push(a);
     }
@@ -245,9 +255,9 @@ function resolveEditorTemplate(explicitEditor) {
 }
 
 /** Fills a resolved editor template's {file}/{line} placeholders and runs it. */
-function launchEditor(template, file, line) {
+function launchEditor(template, file, line, opts = {}) {
   const filled = template.replace(/\{file\}/g, `"${file}"`).replace(/\{line\}/g, String(line));
-  execSync(filled, { stdio: 'ignore' });
+  execSync(filled, { stdio: opts.inherit ? 'inherit' : 'ignore' });
 }
 
 function renderHtml(graph, meta, opts = {}) {
@@ -1100,11 +1110,283 @@ function startServer(args) {
   });
 }
 
+// ---------------------------------------------------------------------------
+// "tui" mode: a searchable, drill-down dependency explorer rendered directly
+// in the terminal with raw ANSI escapes (no dependencies). A 2D box-and-line
+// drawing gets unreadable well before a browser SVG does — this instead lets
+// you search/browse the full task list and drill into one node's immediate
+// dependencies/dependents at a time, which scales to graphs of any size.
+// ---------------------------------------------------------------------------
+
+const ANSI = {
+  reset: '\x1b[0m',
+  bold: '\x1b[1m',
+  dim: '\x1b[2m',
+  inverse: '\x1b[7m',
+  cyan: '\x1b[36m',
+};
+
+/** Builds a reverse map: nodeId -> ids of nodes that declare it as a dependency. */
+function buildDependentsMap(nodes) {
+  const dependents = new Map();
+  nodes.forEach((n) => dependents.set(n.id, []));
+  nodes.forEach((n) => {
+    (n.parentIds || []).forEach((depId) => {
+      if (!dependents.has(depId)) dependents.set(depId, []);
+      dependents.get(depId).push(n.id);
+    });
+  });
+  return dependents;
+}
+
+function truncatePlain(str, max) {
+  if (str.length <= max) return str;
+  if (max <= 1) return str.slice(0, Math.max(0, max));
+  return str.slice(0, max - 1) + '…';
+}
+
+function padPlain(str, width) {
+  return str.length >= width ? str : str + ' '.repeat(width - str.length);
+}
+
+function startTui(args) {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    console.error('Error: "tui" mode requires an interactive terminal.');
+    process.exit(1);
+  }
+
+  const resolvedInput = path.resolve(process.cwd(), args.input);
+  const editorTemplate = resolveEditorTemplate(args.editor);
+
+  let nodesById = new Map();
+  let dependents = new Map();
+  let meta = {};
+
+  function reload() {
+    const loaded = loadGraphFromDisk(args.input);
+    meta = loaded.meta;
+    nodesById = new Map(loaded.graph.nodes.map((n) => [n.id, n]));
+    dependents = buildDependentsMap(loaded.graph.nodes);
+  }
+
+  try {
+    reload();
+  } catch (err) {
+    console.error(`Error: ${err.message}`);
+    process.exit(1);
+  }
+
+  // Navigation is a stack of "levels": each level is a browsable list of
+  // node ids with a label describing how we got there. Level 0 is always
+  // the full task list; drilling into a node pushes its immediate
+  // dependencies + dependents as a new level. Backspace (with an empty
+  // search box) pops back up.
+  const rootLevel = () => ({ label: 'All tasks', ids: Array.from(nodesById.keys()).sort() });
+  let stack = [rootLevel()];
+  let query = '';
+  let selected = 0;
+  let message = '';
+
+  function currentLevel() { return stack[stack.length - 1]; }
+
+  function filteredIds() {
+    const level = currentLevel();
+    if (!query) return level.ids;
+    const q = query.toLowerCase();
+    return level.ids.filter((id) => id.toLowerCase().includes(q));
+  }
+
+  function clampSelection(ids) {
+    if (ids.length === 0) { selected = 0; return; }
+    if (selected < 0) selected = 0;
+    if (selected > ids.length - 1) selected = ids.length - 1;
+  }
+
+  function drillInto(id) {
+    if (!nodesById.has(id)) return; // external nodes have no neighbors of their own to show
+    const node = nodesById.get(id);
+    const deps = (node.parentIds || []).slice().sort();
+    const reqBy = (dependents.get(id) || []).slice().sort();
+    stack.push({ label: id, ids: [...deps, ...reqBy], sectionSplit: deps.length });
+    query = '';
+    selected = 0;
+  }
+
+  function goBack() {
+    if (stack.length > 1) {
+      stack.pop();
+      query = '';
+      selected = 0;
+    }
+  }
+
+  function setRawMode(on) {
+    if (process.stdin.isTTY) process.stdin.setRawMode(on);
+  }
+
+  function openSelected(id) {
+    const node = nodesById.get(id);
+    if (!node) { message = `"${id}" is external — not defined in this package.json.`; return; }
+    if (!editorTemplate) {
+      message = 'No editor detected. Pass --editor "<cmd> {file}:{line}" or set $VISUAL/$EDITOR.';
+      return;
+    }
+    try {
+      const rawText = fs.readFileSync(resolvedInput, 'utf8');
+      const offset = findWireitTaskOffset(rawText, id);
+      const { line } = offsetToLineColumn(rawText, offset != null ? offset : 0);
+      setRawMode(false);
+      launchEditor(editorTemplate, resolvedInput, line, { inherit: true });
+      setRawMode(true);
+      message = `Opened "${id}" at line ${line}.`;
+    } catch (err) {
+      setRawMode(true);
+      message = `Failed to open editor: ${err.message}`;
+    }
+  }
+
+  const HEADER_LINES = 5; // title, breadcrumb, sep, search, sep
+  const DETAIL_LINES = 5; // id, command, deps, used-by, blank
+  const FOOTER_LINES = 2; // sep, help text
+
+  function render() {
+    const cols = Math.max(20, process.stdout.columns || 80);
+    const rows = Math.max(10, process.stdout.rows || 24);
+    const lines = [];
+
+    const totalDeps = Array.from(nodesById.values()).reduce((s, n) => s + (n.parentIds ? n.parentIds.length : 0), 0);
+    lines.push(`${ANSI.bold}${truncatePlain(`unwireit — ${meta.name || 'package.json'}  (${nodesById.size} tasks, ${totalDeps} deps)`, cols)}${ANSI.reset}`);
+    lines.push(`${ANSI.cyan}${truncatePlain(stack.map((l) => l.label).join(' › '), cols)}${ANSI.reset}`);
+    lines.push('─'.repeat(cols));
+
+    const ids = filteredIds();
+    clampSelection(ids);
+    const level = currentLevel();
+
+    lines.push(`${ANSI.dim}Search:${ANSI.reset} ${query || `${ANSI.dim}(type to filter)${ANSI.reset}`}${ANSI.inverse} ${ANSI.reset}  ${ANSI.dim}${truncatePlain(`(${ids.length} shown)`, Math.max(0, cols - query.length - 10))}${ANSI.reset}`);
+    lines.push('─'.repeat(cols));
+
+    const listHeight = Math.max(3, rows - (HEADER_LINES + 1 + DETAIL_LINES + FOOTER_LINES));
+    let scroll = 0;
+    if (ids.length > listHeight) {
+      scroll = Math.min(Math.max(0, selected - Math.floor(listHeight / 2)), ids.length - listHeight);
+    }
+
+    if (ids.length === 0) {
+      lines.push(`${ANSI.dim}${truncatePlain('(no matches)', cols)}${ANSI.reset}`);
+      for (let i = 1; i < listHeight; i++) lines.push('');
+    } else {
+      for (let row = 0; row < listHeight; row++) {
+        const idx = scroll + row;
+        if (idx >= ids.length) { lines.push(''); continue; }
+        const id = ids[idx];
+        const node = nodesById.get(id) || { external: true, parentIds: [] };
+        const depCount = node.parentIds ? node.parentIds.length : 0;
+        const reqCount = (dependents.get(id) || []).length;
+        const marker = node.external ? '○' : '●';
+        let tag = '';
+        if (level.sectionSplit != null) tag = idx < level.sectionSplit ? 'deps: ' : 'used-by: ';
+        const plain = truncatePlain(`${marker} ${tag}${id}  (${depCount}d/${reqCount}u)`, cols);
+        if (idx === selected) {
+          lines.push(`${ANSI.inverse}${padPlain(plain, cols)}${ANSI.reset}`);
+        } else if (node.external) {
+          lines.push(`${ANSI.dim}${plain}${ANSI.reset}`);
+        } else {
+          lines.push(plain);
+        }
+      }
+    }
+
+    lines.push('─'.repeat(cols));
+
+    const highlightId = ids[selected];
+    const hn = highlightId ? nodesById.get(highlightId) : null;
+    if (highlightId && hn) {
+      const cmd = hn.command || (hn.external ? '(external — not defined in this package.json)' : '(no command)');
+      const deps = (hn.parentIds || []).join(', ') || '(none)';
+      const reqBy = (dependents.get(highlightId) || []).join(', ') || '(none)';
+      lines.push(`${ANSI.bold}${truncatePlain(highlightId + (hn.external ? '  (external)' : ''), cols)}${ANSI.reset}`);
+      lines.push(`${ANSI.dim}${truncatePlain('  $ ' + cmd, cols)}${ANSI.reset}`);
+      lines.push(truncatePlain('  Depends on: ' + deps, cols));
+      lines.push(truncatePlain('  Required by: ' + reqBy, cols));
+      lines.push('');
+    } else {
+      lines.push('', '', '', '', '');
+    }
+
+    lines.push('─'.repeat(cols));
+    const footerText = `↑/↓ move  Enter drill in  Bksp back  Ctrl+O editor  Ctrl+R reload  Ctrl+C quit${message ? '   » ' + message : ''}`;
+    lines.push(`${ANSI.dim}${truncatePlain(footerText, cols)}${ANSI.reset}`);
+
+    process.stdout.write('\x1b[2J\x1b[H' + lines.slice(0, rows).join('\r\n'));
+  }
+
+  render();
+
+  readline.emitKeypressEvents(process.stdin);
+  setRawMode(true);
+  process.stdin.resume();
+
+  function onKeypress(str, key) {
+    message = '';
+    if (!key) return;
+    const ids = filteredIds();
+    if (key.ctrl && key.name === 'c') return quit();
+    if (key.ctrl && key.name === 'o') { const id = ids[selected]; if (id) openSelected(id); return render(); }
+    if (key.ctrl && key.name === 'r') {
+      try { reload(); message = 'Reloaded package.json.'; }
+      catch (err) { message = `Reload failed: ${err.message}`; }
+      stack = [rootLevel()];
+      query = '';
+      selected = 0;
+      return render();
+    }
+    if (key.name === 'up') { selected--; clampSelection(ids); return render(); }
+    if (key.name === 'down') { selected++; clampSelection(ids); return render(); }
+    if (key.name === 'pageup') { selected -= 10; clampSelection(ids); return render(); }
+    if (key.name === 'pagedown') { selected += 10; clampSelection(ids); return render(); }
+    if (key.name === 'return') {
+      const id = ids[selected];
+      if (id) drillInto(id);
+      return render();
+    }
+    if (key.name === 'backspace') {
+      if (query) { query = query.slice(0, -1); selected = 0; }
+      else goBack();
+      return render();
+    }
+    if (key.name === 'escape') { query = ''; selected = 0; return render(); }
+    if (!key.ctrl && !key.meta && str && str.length === 1 && str.charCodeAt(0) >= 32) {
+      query += str;
+      selected = 0;
+      return render();
+    }
+  }
+
+  process.stdin.on('keypress', onKeypress);
+
+  function quit() {
+    process.stdin.removeListener('keypress', onKeypress);
+    setRawMode(false);
+    process.stdout.write('\x1b[2J\x1b[H');
+    process.stdin.pause();
+    process.exit(0);
+  }
+
+  process.on('SIGINT', quit);
+  process.stdout.on('resize', render);
+}
+
 function main() {
   const args = parseArgs(process.argv.slice(2));
 
   if (args.mode === 'serve') {
     startServer(args);
+    return;
+  }
+
+  if (args.mode === 'tui') {
+    startTui(args);
     return;
   }
 

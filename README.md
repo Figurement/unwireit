@@ -55,6 +55,9 @@ unwireit [path-to-package.json] [-o output.html] [--no-open]
 
 # Live server: watches package.json and pushes updates to the browser
 unwireit serve [path-to-package.json] [-p port] [--no-open] [--editor <cmd>]
+
+# Terminal UI: searchable dependency explorer, no browser needed
+unwireit tui [path-to-package.json] [--editor <cmd>]
 ```
 
 (If you're running from a source checkout instead of an installed
@@ -77,6 +80,46 @@ above.)
     If omitted, it's auto-detected from `$VISUAL`/`$EDITOR`, then by
     checking common editors on `PATH` (VS Code, Cursor, Sublime, Atom,
     JetBrains IDEs, vim/nvim/emacs/nano).
+- **`tui` mode** renders an interactive dependency explorer directly in
+  your terminal (see "Terminal UI" below) — useful for huge graphs
+  where a 2D box-and-line drawing gets cluttered, or when you just
+  don't want to leave the terminal.
+
+## Terminal UI (`tui` mode)
+
+A 2D drawing of a dependency graph gets hard to read well before a
+terminal-sized text UI does — line crossings and box overlap get worse
+with graph size, in a browser or otherwise. `tui` mode sidesteps that
+entirely: instead of drawing the whole graph at once, it lets you
+search the full task list and drill into **one task's immediate
+neighborhood at a time** (its direct dependencies and dependents),
+which stays equally readable whether the graph has 10 tasks or 1000.
+
+```bash
+unwireit tui
+```
+
+- **Type to search** — filters the current list by substring match, live.
+- **↑ / ↓ / Page Up / Page Down** — move the selection; the detail
+  panel below always shows the highlighted task's command, its direct
+  dependencies, and what depends on it.
+- **Enter** — drill into the highlighted task, replacing the list with
+  just its dependencies (`deps:`) and dependents (`used-by:`). A
+  breadcrumb trail at the top shows how you got there.
+- **Backspace** — edits the search box; with an empty search box, it
+  pops back up to the previous level instead.
+- **Esc** — clears the current search box without changing level.
+- **Ctrl+O** — opens the highlighted task's definition in your editor,
+  at the exact line under `"wireit"` (same editor resolution as
+  `serve` mode's `--editor` flag / `$VISUAL` / `$EDITOR` / PATH
+  auto-detection). Not available for external tasks.
+- **Ctrl+R** — re-reads `package.json` from disk and resets to the
+  root task list (handy if you've been editing it in another window).
+- **Ctrl+C** — quit.
+- External/cross-package tasks (not defined in this `package.json`,
+  e.g. `../other:build`) are shown dimmed with a hollow marker (`○`
+  vs `●`) and can't be opened in an editor, but their dependents still
+  show up when you drill into them.
 
 ## Features
 
@@ -121,6 +164,7 @@ above.)
 ```bash
 unwireit ./my-project/package.json -o graph.html
 unwireit serve ./my-project/package.json -p 4000
+unwireit tui ./my-project/package.json
 ```
 
 ## License
