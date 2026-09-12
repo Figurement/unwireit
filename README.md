@@ -1,3 +1,7 @@
+
+
+https://github.com/user-attachments/assets/af8a63af-564b-4f0e-811d-54025d2fb9c5
+
 # unwireit
 
 A tiny CLI tool that reads a `package.json`, extracts its `wireit` task
