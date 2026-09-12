@@ -28,6 +28,14 @@
   ],
   "author": "Søren Skovsbøll",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Figurement/unwireit.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Figurement/unwireit/issues"
+  },
+  "homepage": "https://github.com/Figurement/unwireit#readme",
   "engines": {
     "node": ">=16"
   }
