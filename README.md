@@ -1,4 +1,4 @@
-# wireit-graph
+# unwireit
 
 A tiny CLI tool that reads a `package.json`, extracts its `wireit` task
 configuration, and renders the task dependency graph as an interactive
@@ -15,14 +15,14 @@ readable at a glance.
 Use it without installing anything, via `npx`:
 
 ```bash
-npx wireit-graph serve
+npx unwireit serve
 ```
 
 Or add it as a dev dependency of the project whose `wireit` graph you
 want to visualize:
 
 ```bash
-npm install --save-dev wireit-graph
+npm install --save-dev unwireit
 ```
 
 then run it via `npx`, or wire it into a `package.json` script:
@@ -30,15 +30,15 @@ then run it via `npx`, or wire it into a `package.json` script:
 ```json
 {
   "scripts": {
-    "graph": "wireit-graph serve"
+    "graph": "unwireit serve"
   }
 }
 ```
 
-Or install it globally so the `wireit-graph` command is always available:
+Or install it globally so the `unwireit` command is always available:
 
 ```bash
-npm install -g wireit-graph
+npm install -g unwireit
 ```
 
 Requires Node.js 16 or later.
@@ -47,14 +47,14 @@ Requires Node.js 16 or later.
 
 ```bash
 # Static export (default)
-wireit-graph [path-to-package.json] [-o output.html] [--no-open]
+unwireit [path-to-package.json] [-o output.html] [--no-open]
 
 # Live server: watches package.json and pushes updates to the browser
-wireit-graph serve [path-to-package.json] [-p port] [--no-open] [--editor <cmd>]
+unwireit serve [path-to-package.json] [-p port] [--no-open] [--editor <cmd>]
 ```
 
 (If you're running from a source checkout instead of an installed
-package, substitute `node index.js` for `wireit-graph` in the examples
+package, substitute `node index.js` for `unwireit` in the examples
 above.)
 
 - Defaults to `./package.json` if no path is given.
@@ -115,8 +115,8 @@ above.)
 ## Example
 
 ```bash
-wireit-graph ./my-project/package.json -o graph.html
-wireit-graph serve ./my-project/package.json -p 4000
+unwireit ./my-project/package.json -o graph.html
+unwireit serve ./my-project/package.json -p 4000
 ```
 
 ## License

@@ -9,8 +9,8 @@ const { execSync, spawn } = require('child_process');
 
 function usage() {
   console.log(`Usage:
-  wireit-graph [path-to-package.json] [-o output.html] [--no-open]
-  wireit-graph serve [path-to-package.json] [-p port] [--no-open] [--editor <cmd>]
+  unwireit [path-to-package.json] [-o output.html] [--no-open]
+  unwireit serve [path-to-package.json] [-p port] [--no-open] [--editor <cmd>]
 
 Reads a package.json, extracts the "wireit" task configuration, and
 renders the task dependency graph as an interactive layered DAG
@@ -743,7 +743,7 @@ function render() {
       return;
     }
     if (!LIVE) {
-      showToast('Double-click-to-open requires "wireit-graph serve" mode');
+      showToast('Double-click-to-open requires "unwireit serve" mode');
       return;
     }
     fetch('/api/open?id=' + encodeURIComponent(d.id))
